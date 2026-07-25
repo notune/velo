@@ -4,14 +4,18 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QDoubleSpinBox>
+#include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QHeaderView>
 #include <QKeySequenceEdit>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QMutexLocker>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSettings>
@@ -218,11 +222,76 @@ ExportDialog::ExportDialog(Document *doc, const QString &seqId, QWidget *parent)
     });
 }
 
+// "clip.mp4" -> "clip (export).mp4", skipping names that clash or exist.
+static QString suggestFreeName(Document *doc, const QString &path) {
+    const QFileInfo fi(path);
+    const QString suffix = fi.suffix().isEmpty() ? QString() : "." + fi.suffix();
+    for (int n = 1; n <= 99; ++n) {
+        const QString tag =
+            n == 1 ? QString(" (export)") : QString(" (export %1)").arg(n);
+        const QString cand =
+            fi.absolutePath() + "/" + fi.completeBaseName() + tag + suffix;
+        if (QFile::exists(cand)) continue;
+        QMutexLocker lock(doc->mutex());
+        if (!Exporter::checkOutputPath(doc->project(), cand)) return cand;
+    }
+    return QString();
+}
+
+bool ExportDialog::confirmOutputPath(QString &path) {
+    OutputConflict clash;
+    {
+        QMutexLocker lock(m_doc->mutex());
+        clash = Exporter::checkOutputPath(m_doc->project(), path);
+    }
+    if (!clash) return true;
+
+    if (!clash.blocking()) {  // unused bin item: the user's call
+        return QMessageBox::warning(
+                   this, tr("Overwrite media?"),
+                   tr("%1 is in the media bin. Exporting there replaces the "
+                      "imported file and the bin item will point at the "
+                      "export instead.\n\nContinue?")
+                       .arg(clash.path),
+                   QMessageBox::Yes | QMessageBox::No,
+                   QMessageBox::No) == QMessageBox::Yes;
+    }
+
+    const QString what =
+        clash.kind == OutputConflict::ProjectFile
+            ? tr("%1 is this project file.").arg(clash.path)
+            : tr("“%1” is a source used in the timeline (%2).")
+                  .arg(clash.name, clash.path);
+    QMessageBox box(QMessageBox::Warning, tr("Cannot export there"),
+                    what + "\n\n" +
+                        tr("Encoding writes the file while the timeline is "
+                           "still reading from it, which would blacken part of "
+                           "the export and destroy the original."),
+                    QMessageBox::NoButton, this);
+    const QString suggestion = suggestFreeName(m_doc, path);
+    QPushButton *useSuggested =
+        suggestion.isEmpty()
+            ? nullptr
+            : box.addButton(tr("Export to “%1” instead")
+                                .arg(QFileInfo(suggestion).fileName()),
+                            QMessageBox::AcceptRole);
+    box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(useSuggested ? useSuggested : nullptr);
+    box.exec();
+    if (useSuggested && box.clickedButton() == useSuggested) {
+        m_path->setText(suggestion);
+        path = suggestion;
+        return true;
+    }
+    return false;
+}
+
 void ExportDialog::startExport() {
     if (m_exporter && m_exporter->isRunning()) return;
     ExportSettings s;
     s.outputPath = m_path->text().trimmed();
     if (s.outputPath.isEmpty()) return;
+    if (!confirmOutputPath(s.outputPath)) return;
     s.videoCodec = m_codec->currentData().toString();
     s.width = m_w->value();
     s.height = m_h->value();

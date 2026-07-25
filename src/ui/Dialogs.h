@@ -37,6 +37,9 @@ public:
 
 private:
     void startExport();
+    // Refuses (or confirms) an output path that would overwrite a file the
+    // project reads from; may rewrite path to an accepted suggestion.
+    bool confirmOutputPath(QString &path);
     Document *m_doc;
     QString m_seqId;
     QLineEdit *m_path;

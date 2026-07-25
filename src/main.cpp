@@ -337,20 +337,45 @@ static int selftest() {
     es.height = 360;
     es.fps = 30;
     es.crf = 28;
-    Exporter exp(&doc.project(), doc.mutex(), seqId, es);
-    bool ok = false;
     QString msg;
-    QEventLoop loop;
-    QObject::connect(&exp, &Exporter::finished, &loop,
-                     [&](bool o, const QString &m) {
-                         ok = o;
-                         msg = m;
-                         loop.quit();
-                     });
-    exp.start();
-    loop.exec();
-    exp.wait(10000);
-    if (!ok) {
+    auto runExport = [&](const QString &out) {
+        ExportSettings s = es;
+        s.outputPath = out;
+        Exporter exp(&doc.project(), doc.mutex(), seqId, s);
+        bool ok = false;
+        QEventLoop loop;
+        QObject::connect(&exp, &Exporter::finished, &loop,
+                         [&](bool o, const QString &m) {
+                             ok = o;
+                             msg = m;
+                             loop.quit();
+                         });
+        exp.start();
+        loop.exec();
+        exp.wait(10000);
+        return ok;
+    };
+
+    // exporting on top of a file the project reads from must be refused,
+    // not truncated half-way through the render
+    // (the last spelling is the same file by a non-canonical path)
+    for (const QString &spelling :
+         {vid, proj, dir + "/./" + QFileInfo(vid).fileName()}) {
+        const QString real = QFileInfo(spelling).canonicalFilePath();
+        const qint64 before = QFileInfo(real).size();
+        if (runExport(spelling)) {
+            fprintf(stderr, "selftest: export overwrote source %s\n",
+                    qPrintable(spelling));
+            return 1;
+        }
+        if (QFileInfo(real).size() != before) {
+            fprintf(stderr, "selftest: source %s was modified\n",
+                    qPrintable(real));
+            return 1;
+        }
+    }
+
+    if (!runExport(es.outputPath)) {
         fprintf(stderr, "selftest: export failed: %s\n", qPrintable(msg));
         return 1;
     }

@@ -5,6 +5,7 @@
 #include <QDataStream>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QMutexLocker>
 #include <QProcess>
 #include <QTemporaryFile>
@@ -43,6 +44,60 @@ QStringList Exporter::availableEncoders() {
     return cached;
 }
 
+// Resolve a path far enough that two spellings of the same file compare equal:
+// symlinks, "..", "./", a relative path. A destination that does not exist yet
+// cannot be a source, so the weaker directory-only fallback is enough there.
+static QString resolvedPath(const QString &p) {
+    if (p.isEmpty()) return QString();
+    const QFileInfo fi(QDir::fromNativeSeparators(p));
+    const QString canonical = fi.canonicalFilePath();
+    if (!canonical.isEmpty()) return canonical;
+    const QDir dir(fi.absolutePath());
+    const QString canonicalDir = dir.canonicalPath();
+    return (canonicalDir.isEmpty() ? QDir::cleanPath(dir.absolutePath())
+                                   : canonicalDir) +
+           "/" + fi.fileName();
+}
+
+static bool samePath(const QString &a, const QString &b) {
+    if (a.isEmpty() || b.isEmpty()) return false;
+#ifdef Q_OS_WIN
+    return a.compare(b, Qt::CaseInsensitive) == 0;
+#else
+    return a == b;
+#endif
+}
+
+OutputConflict Exporter::checkOutputPath(const Project &project,
+                                         const QString &outputPath) {
+    OutputConflict c;
+    const QString out = resolvedPath(outputPath);
+    if (out.isEmpty()) return c;
+
+    if (samePath(out, resolvedPath(project.filePath))) {
+        c.kind = OutputConflict::ProjectFile;
+        c.path = project.filePath;
+        return c;
+    }
+    for (const MediaItem &m : project.media) {
+        if (!samePath(out, resolvedPath(m.path))) continue;
+        c.kind = OutputConflict::MediaUnused;
+        c.path = m.path;
+        c.name = m.name.isEmpty() ? QFileInfo(m.path).fileName() : m.name;
+        for (const Sequence &seq : project.sequences)
+            for (const QList<Track> *tracks :
+                 {&seq.videoTracks, &seq.audioTracks})
+                for (const Track &t : *tracks)
+                    for (const Clip &clip : t.clips)
+                        if (clip.mediaId == m.id) {
+                            c.kind = OutputConflict::MediaInUse;
+                            return c;
+                        }
+        return c;
+    }
+    return c;
+}
+
 static bool writeWavHeader(QFile &f, qint64 dataBytes) {
     QByteArray h;
     QDataStream ds(&h, QIODevice::WriteOnly);
@@ -67,6 +122,20 @@ void Exporter::run() {
             return;
         }
         duration = seq->duration();
+        // Last line of defence: ffmpeg would truncate the file before the
+        // compositor is done reading it (black frames + a lost source).
+        const OutputConflict clash = checkOutputPath(*m_project, m_s.outputPath);
+        if (clash.blocking()) {
+            emit finished(false,
+                          clash.kind == OutputConflict::ProjectFile
+                              ? tr("The output file is this project file (%1). "
+                                   "Choose a different name.")
+                                    .arg(clash.path)
+                              : tr("The output file is a source used in the "
+                                   "timeline (%1). Choose a different name.")
+                                    .arg(clash.path));
+            return;
+        }
     }
     if (duration <= 0) {
         emit finished(false, tr("Sequence is empty"));
