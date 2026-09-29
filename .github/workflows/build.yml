@@ -25,7 +25,10 @@ env:
 
 jobs:
   linux:
-    runs-on: ubuntu-24.04
+    # Oldest supported Ubuntu LTS: the AppImage links against the build
+    # host's glibc, so building here keeps it runnable on glibc >= 2.35
+    # (the AppImageHub catalog tests on 22.04 too).
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - name: Read version
@@ -70,21 +73,31 @@ jobs:
             -d dist/velo.desktop -i dist/velo.svg --plugin qt
           cp "$QT_ROOT_DIR/plugins/platforms/libqoffscreen.so" AppDir/usr/plugins/platforms/
           ./linuxdeploy --appdir AppDir --output appimage
-          mv Velo-x86_64.AppImage "Velo-$VER-linux-x86_64.AppImage"
+          mv Velo-x86_64.AppImage "Velo-$VER-x86_64.AppImage"
           cp -r AppDir "velo-$VER-linux-x86_64"
           tar cJf "velo-$VER-linux-x86_64-portable.tar.xz" "velo-$VER-linux-x86_64"
+      - name: Check glibc requirement
+        # Fail if anything in the bundle needs a newer glibc than 22.04 ships
+        run: |
+          MAX=2.35
+          NEED=$(find AppDir -type f -exec file {} + | grep ELF | cut -d: -f1 \
+            | xargs objdump -T 2>/dev/null | grep -o 'GLIBC_[0-9.]*' \
+            | sed 's/GLIBC_//' | sort -Vu | tail -1)
+          echo "highest glibc symbol version: $NEED"
+          [ "$(printf '%s\n' "$NEED" "$MAX" | sort -V | tail -1)" = "$MAX" ] || {
+            echo "bundle needs glibc $NEED > $MAX"; exit 1; }
       - name: Smoke-test bundles
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
           VER=${{ steps.ver.outputs.v }}
-          "./Velo-$VER-linux-x86_64.AppImage" --appimage-extract-and-run --selftest
+          "./Velo-$VER-x86_64.AppImage" --appimage-extract-and-run --selftest
           "./velo-$VER-linux-x86_64/AppRun" --selftest
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x86_64
           path: |
-            Velo-*-linux-x86_64.AppImage
+            Velo-*-x86_64.AppImage
             velo-*-linux-x86_64-portable.tar.xz
 
   windows:
@@ -236,7 +249,7 @@ jobs:
           ### Downloads
           | Platform | File | How to run |
           |---|---|---|
-          | Linux x86_64 | \`Velo-$VER-linux-x86_64.AppImage\` | \`chmod +x\`, then run (no FUSE? add \`--appimage-extract-and-run\`) |
+          | Linux x86_64 | \`Velo-$VER-x86_64.AppImage\` | \`chmod +x\`, then run (no FUSE? add \`--appimage-extract-and-run\`) |
           | Linux x86_64 | \`velo-$VER-linux-x86_64-portable.tar.xz\` | extract, run \`./AppRun\` |
           | Windows x64 | \`Velo-$VER-windows-x86_64.zip\` | extract, run \`velo.exe\` |
           | macOS (Apple Silicon) | \`Velo-$VER-macos-arm64.dmg\` | drag Velo to Applications; first launch: right-click → Open (unsigned build) |
