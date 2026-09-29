@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 # Single source of truth for the Velo version: project(... VERSION x.y.z).
 # It flows into the app (VELO_VERSION define), the macOS bundle metadata and
 # the CI release pipeline (release tags must match, see .github/workflows).
-project(Velo VERSION 0.0.1 LANGUAGES CXX)
+project(Velo VERSION 0.0.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

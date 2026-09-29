@@ -76,10 +76,10 @@ Qt, the FFmpeg libraries **and the `ffmpeg` export binary** are bundled at
 the exact versions Velo is developed against, so nothing else needs to be
 installed:
 
-- **Linux** — `Velo-<ver>-linux-x86_64.AppImage`: `chmod +x` and run (on
+- **Linux** — `Velo-<ver>-x86_64.AppImage`: `chmod +x` and run (on
   systems without FUSE add `--appimage-extract-and-run`); or the
   `-portable.tar.xz`: extract anywhere and run `./AppRun`.
-  Needs glibc ≥ 2.39 (Ubuntu 24.04+, any 2024+ rolling distro).
+  Needs glibc ≥ 2.35 (Ubuntu 22.04+, Debian 12+, Fedora 36+).
 - **Windows** — `Velo-<ver>-windows-x86_64.zip`: extract, run `velo.exe`.
 - **macOS (Apple Silicon)** — `Velo-<ver>-macos-arm64.dmg`: drag Velo to
   Applications. The build is unsigned, so on first launch right-click the
